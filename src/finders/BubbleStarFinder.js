@@ -224,6 +224,51 @@ function Bubble (x, y, radius) {
   this.radius = radius
 }
 
+function bubblesOverlap (bubbleA, bubbleB) {
+  var dx = bubbleA.x - bubbleB.x
+  var dy = bubbleA.y - bubbleB.y
+  var r = bubbleA.radius + bubbleB.radius
+  return dx * dx + dy * dy <= r * r
+}
+
+function getOverlappingBubbles (bubble, bubbles, currentBubbleIdx) {
+  var overlappingBubbles = []
+  for (var i = 0; i < bubbles.length; i++) {
+    if (i === currentBubbleIdx) continue
+    if (bubblesOverlap(bubble, bubbles[i])) {
+      overlappingBubbles.push(bubbles[i])
+    }
+  }
+  return overlappingBubbles
+}
+
+function filterBoundaryAgainstBubbles (edge, cx, cy, overlappingBubbles) {
+  var filteredEdge = []
+  for (var i = 0; i < edge.length; i++) {
+    var dx = edge[i][0]
+    var dy = edge[i][1]
+    var nx = cx + dx
+    var ny = cy + dy
+    var insideBubble = false
+
+    for (var j = 0; j < overlappingBubbles.length; j++) {
+      var bubble = overlappingBubbles[j]
+      var bx = nx - bubble.x
+      var by = ny - bubble.y
+      var b_rad = bubble.radius
+      if (bx * bx + by * by < b_rad * b_rad) {
+        insideBubble = true
+        break
+      }
+    }
+
+    if (!insideBubble) {
+      filteredEdge.push(edge[i])
+    }
+  }
+  return filteredEdge
+}
+
 BubbleStarFinder.prototype.findPath = function (
   startX,
   startY,
@@ -264,6 +309,37 @@ BubbleStarFinder.prototype.findPath = function (
   startNode.opened = true
   nodeMap.set(key(startNode), startNode)
 
+  function collectOverlapData (bubble, currentNode, currentBubbleIdx) {
+    var overlappingBubbles = getOverlappingBubbles(bubble, bubbles, currentBubbleIdx)
+    var parentCandidates = []
+    var parentCandidateKeys = new Set()
+
+    function addParentCandidate (candidate) {
+      if (!candidate) return
+      var candidateKey = key(candidate)
+      if (parentCandidateKeys.has(candidateKey)) return
+      parentCandidateKeys.add(candidateKey)
+      parentCandidates.push(candidate)
+    }
+
+    addParentCandidate(currentNode)
+
+    for (var i = 0; i < overlappingBubbles.length; i++) {
+      var existingBubble = overlappingBubbles[i]
+      addParentCandidate(existingBubble.sourceNode)
+      if (existingBubble.boundaryNodes) {
+        for (var j = 0; j < existingBubble.boundaryNodes.length; j++) {
+          addParentCandidate(existingBubble.boundaryNodes[j])
+        }
+      }
+    }
+
+    return {
+      parentCandidates: parentCandidates,
+      overlappingBubbles: overlappingBubbles
+    }
+  }
+
   /**
    * Compute neighbors for Bubble* expansion from a node.
    *
@@ -279,6 +355,17 @@ BubbleStarFinder.prototype.findPath = function (
 
     // "sphereEdge" in 2D => your disk boundary offsets for integer radius r
     var edge = diskBoundaryOffsets(radius, diagonalMovement) // returns Array<[dx,dy]>
+    var bubble = bubbles[bubble_idx]
+    var overlapData = collectOverlapData(bubble, node, bubble_idx)
+    var viaNodes = overlapData.parentCandidates
+    var K = viaNodes.length
+
+    edge = filterBoundaryAgainstBubbles(
+      edge,
+      node.x,
+      node.y,
+      overlapData.overlappingBubbles
+    )
 
     // Base case: no parent
     if (!node.parent) {
@@ -299,54 +386,17 @@ BubbleStarFinder.prototype.findPath = function (
         neighbor.bubble_idx = bubble_idx
         neighbors.push(neighbor)
       }
+      bubble.boundaryNodes = neighbors
       nodeMap.delete(key(node))
       return neighbors
     }
 
-    // Candidate "via" nodes near current node — use OPEN set within r
-    var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius)
-    viaNodes.push(node) // also consider the current node as a via candidate
-    var K = viaNodes.length
-
     if (viaNodes.length > 0) {
-      // Precompute bubbles referenced by via nodes (and guard bubble_idx)
-      var viaBubbles = []
       for (var i = 0; i < viaNodes.length; i++) {
         var via = viaNodes[i]
         via.closed = true
         //nodeMap.delete(key(via))
-
-        var idx = via.bubble_idx
-        if (idx != null && bubbles[idx] && (viaBubbles[bubbles[idx]] === undefined)) {
-          viaBubbles.push(bubbles[idx])
-        }
       }
-
-      // Filter edge once
-      var filteredEdge = []
-      for (i = 0; i < edge.length; i++) {
-        dx = edge[i][0]
-        dy = edge[i][1]
-        var nx = node.x + dx
-        var ny = node.y + dy
-        var insideViaBubble = false
-
-        for (var j = 0; j < viaBubbles.length; j++) {
-          var b = viaBubbles[j]
-          var bx = nx - b.x
-          var by = ny - b.y
-          b_rad = b.radius
-          if (bx * bx + by * by < b_rad * b_rad) {
-            insideViaBubble = true
-            break
-          }
-        }
-
-        if (!insideViaBubble) {
-          filteredEdge.push(edge[i])
-        }
-      }
-      edge = filteredEdge
     }
 
     var N = edge.length
@@ -386,6 +436,7 @@ BubbleStarFinder.prototype.findPath = function (
           neighbors.push(neighbor)
         }
       }
+      bubble.boundaryNodes = neighbors
       return neighbors
     }
 
@@ -424,6 +475,7 @@ BubbleStarFinder.prototype.findPath = function (
       }
     }
 
+    bubble.boundaryNodes = neighbors
     return neighbors
   }
 
@@ -457,14 +509,15 @@ BubbleStarFinder.prototype.findPath = function (
     radius = Math.floor(radius)
     console.log('Expanding bubble at', node.x, node.y, 'with radius', radius)
     var bubble = new Bubble(node.x, node.y, radius)
+    bubble.sourceNode = node
     bubbles.push(bubble)
 
     // if reached the end position, construct the path and return it
     if (bubbleContains(bubble, endNode)) {
       console.log('End node is within bubble, connecting directly to end node')
       // calculate the path to the end node,
-      var viaNodes = cellsWithinRadius(nodeMap, node.x, node.y, radius)
-      viaNodes.push(node) // also consider the current node as a via candidate
+      var overlapData = collectOverlapData(bubble, node, bubbles.length - 1)
+      var viaNodes = overlapData.parentCandidates
       var bestCost = Infinity
       for (i = 0; i < viaNodes.length; i++) {
         var via = viaNodes[i]
