@@ -391,13 +391,13 @@ BubbleStarFinder.prototype.findPath = function (
       return neighbors
     }
 
-    if (viaNodes.length > 0) {
-      for (var i = 0; i < viaNodes.length; i++) {
-        var via = viaNodes[i]
-        via.closed = true
-        //nodeMap.delete(key(via))
-      }
-    }
+    // if (viaNodes.length > 0) {
+    //   for (var i = 0; i < viaNodes.length; i++) {
+    //     var via = viaNodes[i]
+    //     via.closed = true
+    //     //nodeMap.delete(key(via))
+    //   }
+    // }
 
     var N = edge.length
 
